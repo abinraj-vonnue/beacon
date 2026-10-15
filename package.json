@@ -1,0 +1,32 @@
+{
+  "name": "beacon",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/abinraj-vonnue/beacon#readme",
+  "bugs": {
+    "url": "https://github.com/abinraj-vonnue/beacon/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abinraj-vonnue/beacon.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "private": "true",
+  "workspaces": [
+    "apps/api",
+    "apps/worker",
+    "packages/shared"
+  ],
+  "devDependencies": {
+    "@types/node": "^26.6.5"
+  }
+}
