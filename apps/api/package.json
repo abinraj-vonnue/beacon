@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "build" : "tsc",
     "start": "node dist/index.js",
-    "migrate": "tsx src/migrate.ts"
+    "migrate": "tsx src/migrate.ts",
+    "create-api-key": "tsx src/create-api-key.ts"
 
   },
   "keywords": [],
