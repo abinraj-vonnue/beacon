@@ -1,7 +1,5 @@
 -- Beacon: Initial db schema
 
-BEGIN;
-
 CREATE TABLE monitors(
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -92,4 +90,3 @@ CREATE TABLE api_keys(
     CHECK (LENGTH(TRIM(name)) > 0)
 );
 
-COMMIT;
