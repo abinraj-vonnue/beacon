@@ -9,7 +9,8 @@
     "build" : "tsc",
     "start": "node dist/index.js",
     "migrate": "tsx src/migrate.ts",
-    "create-api-key": "tsx src/create-api-key.ts"
+    "create-api-key": "tsx src/create-api-key.ts",
+    "db:reset": "tsx src/scripts/reset-db.ts"
 
   },
   "keywords": [],
