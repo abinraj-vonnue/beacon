@@ -1,6 +1,8 @@
 import { config } from "./config";
 import Fastify from "fastify";
 import { pool } from "./db";
+import { authenticateApiKey } from "./plugins/authenticate-api-keys";
+import { monitorRoutes } from "./modules/monitors/monitor.routes";
 
 export function buildServer() {
   const app = Fastify({
@@ -8,9 +10,11 @@ export function buildServer() {
       level: config.LOG_LEVEL,
     },
   });
+
   app.get("/healthz", async () => {
     return { status: "ok" };
   });
+
   app.get("/readyz", async (_request, reply) => {
     try {
       await pool.query("SELECT 1");
@@ -23,5 +27,12 @@ export function buildServer() {
       });
     }
   });
+
+  app.get("/protected", { preHandler: authenticateApiKey }, async () => ({
+    status: "authenticated",
+  }));
+
+  app.register(monitorRoutes);
+
   return app;
 }
