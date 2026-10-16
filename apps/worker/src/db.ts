@@ -6,9 +6,13 @@ dotenv.config({ path: "../../.env" });
 
 const configSchema = z.object({
   DATABASE_URL: z.string().min(1),
+  WEBHOOK_URL: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().url().optional(),
+  ),
 });
 
-const config = configSchema.parse(process.env);
+export const config = configSchema.parse(process.env);
 
 export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,

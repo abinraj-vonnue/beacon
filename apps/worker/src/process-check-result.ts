@@ -1,7 +1,7 @@
 import { pool } from "./db.js";
 import type { ClaimedMonitor } from "./monitor-claim.js";
 import type { HttpCheckResult } from "./http-check.js";
-
+import { sendIncidentWebhook } from "./webhook.js";
 // Adjust this import to the export provided by your shared workspace package.
 // The state machine itself must remain pure.
 import { nextState } from "../../../packages/shared/src/incident-state.js";
@@ -83,6 +83,7 @@ export async function processCheckResult({
         monitor.interval_seconds,
       ],
     );
+    let webhookEvent: "opened" | "resolved" | undefined;
 
     if (transition.action === "open") {
       await client.query(
@@ -90,8 +91,17 @@ export async function processCheckResult({
          VALUES ($1)`,
         [monitor.id],
       );
+      webhookEvent = "opened";
     } else if (transition.action === "close") {
-      await client.query(
+      const incidentId = incidentResult.rows[0]?.id;
+
+      if (!incidentId) {
+        throw new Error(
+          `Cannot resolve incident: no open incident found for monitor ${monitor.id}`,
+        );
+      }
+
+      const updateResult = await client.query(
         `UPDATE incidents
          SET status = 'resolved',
              resolved_at = NOW()
@@ -99,9 +109,17 @@ export async function processCheckResult({
            AND status = 'open'`,
         [incidentResult.rows[0]?.id],
       );
+
+      if (updateResult.rowCount !== 1) {
+        throw new Error(`Failed to resolve incident ${incidentId}`);
+      }
+      webhookEvent = "resolved";
     }
 
     await client.query("COMMIT");
+    if (webhookEvent) {
+      await sendIncidentWebhook(webhookEvent, monitor);
+    }
   } catch (error) {
     try {
       await client.query("ROLLBACK");
