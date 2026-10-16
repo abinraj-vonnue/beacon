@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/apps/worker/src/index.js",
+    "test": "tsc -p tsconfig.test.json && node --import tsx --input-type=module -e \"await import('./src/incident-state.test.ts'); await import('./src/worker-loop.test.ts')\""
   },
   "keywords": [],
   "author": "",

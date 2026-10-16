@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { ClaimedMonitor } from "./monitor-claim";
+import type { ClaimedMonitor } from "./monitor-claim.js";
 
 export type HttpCheckResult = {
   ok: boolean;
