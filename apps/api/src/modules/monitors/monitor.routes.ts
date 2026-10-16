@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from "fastify";
-import { authenticateApiKey } from "../../plugins/authenticate-api-keys";
+import { authenticateApiKey } from "../../plugins/authenticate-api-keys.js";
 
-import * as monitorController from "./monitor.controller";
+import * as monitorController from "./monitor.controller.js";
 
 export const monitorRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", authenticateApiKey);

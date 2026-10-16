@@ -1,10 +1,10 @@
 import { FastifyReply, FastifyRequest } from "fastify";
-import * as monitorService from "./monitor.service";
+import * as monitorService from "./monitor.service.js";
 import {
   createMonitorSchema,
   monitorIdSchema,
   updateMonitorSchema,
-} from "./monitor.schema";
+} from "./monitor.schema.js";
 
 type MonitorParams = { id: string };
 

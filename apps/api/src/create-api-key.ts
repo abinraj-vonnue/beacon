@@ -1,5 +1,5 @@
-import { pool } from "./db";
-import { createApiKey } from "./modules/api-keys/api-key.service";
+import { pool } from "./db.js";
+import { createApiKey } from "./modules/api-keys/api-key.service.js";
 
 const name = process.argv[2]?.trim();
 

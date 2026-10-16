@@ -1,6 +1,6 @@
-import { config } from "./config";
-import { pool } from "./db";
-import { buildServer } from "./server";
+import { config } from "./config.js";
+import { pool } from "./db.js";
+import { buildServer } from "./server.js";
 
 const app = buildServer();
 try {

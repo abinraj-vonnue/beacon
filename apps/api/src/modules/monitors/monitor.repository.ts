@@ -1,5 +1,5 @@
-import { pool } from "../../db";
-import { CreateMonitorInput, UpdateMonitorInput } from "./monitor.schema";
+import { pool } from "../../db.js";
+import { CreateMonitorInput, UpdateMonitorInput } from "./monitor.schema.js";
 
 const monitorColumns = `
   id,
