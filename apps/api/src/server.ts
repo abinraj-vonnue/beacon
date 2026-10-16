@@ -1,8 +1,8 @@
-import { config } from "./config";
+import { config } from "./config.js";
 import Fastify from "fastify";
-import { pool } from "./db";
-import { authenticateApiKey } from "./plugins/authenticate-api-keys";
-import { monitorRoutes } from "./modules/monitors/monitor.routes";
+import { pool } from "./db.js";
+import { authenticateApiKey } from "./plugins/authenticate-api-keys.js";
+import { monitorRoutes } from "./modules/monitors/monitor.routes.js";
 
 export function buildServer() {
   const app = Fastify({

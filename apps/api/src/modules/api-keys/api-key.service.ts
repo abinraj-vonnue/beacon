@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { findActiveApiKey, insertApiKey } from "./api-key.repository";
+import { findActiveApiKey, insertApiKey } from "./api-key.repository.js";
 
 function hashApiKey(apiKey: string): string {
   return createHash("sha256").update(apiKey).digest("hex");

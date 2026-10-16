@@ -1,4 +1,4 @@
-import { pool } from "../db";
+import { pool } from "../db.js";
 
 const TABLES = ["check_results", "incidents", "monitors", "api_keys"];
 

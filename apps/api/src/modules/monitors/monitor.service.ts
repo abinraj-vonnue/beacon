@@ -1,5 +1,5 @@
-import * as monitorRepository from "./monitor.repository";
-import { CreateMonitorInput, UpdateMonitorInput } from "./monitor.schema";
+import * as monitorRepository from "./monitor.repository.js";
+import { CreateMonitorInput, UpdateMonitorInput } from "./monitor.schema.js";
 
 export async function createMonitor(data: CreateMonitorInput) {
   return monitorRepository.createMonitor(data);

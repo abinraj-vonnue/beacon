@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { pool } from "./db";
+import { pool } from "./db.js";
 import { readdir, readFile } from "node:fs/promises";
 
 const migrationsDirectory = fileURLToPath(
