@@ -2,9 +2,7 @@ import { pool } from "./db.js";
 import type { ClaimedMonitor } from "./monitor-claim.js";
 import type { HttpCheckResult } from "./http-check.js";
 import { sendIncidentWebhook } from "./webhook.js";
-// Adjust this import to the export provided by your shared workspace package.
-// The state machine itself must remain pure.
-import { nextState } from "../../../packages/shared/src/incident-state.js";
+import { nextState } from "@beacon/shared";
 
 export type ProcessCheckResultInput = {
   monitor: ClaimedMonitor;

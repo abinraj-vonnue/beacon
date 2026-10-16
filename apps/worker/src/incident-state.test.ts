@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextState } from "../../../packages/shared/src/incident-state.js";
+import { nextState } from "@beacon/shared";
 
 test("opens only on the third consecutive failure and does not reopen an open incident", () => {
   const afterFirstFailure = nextState(

@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "prebuild": "npm run build --workspace=@beacon/shared",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/apps/worker/src/index.js",
+    "pretest": "npm run build --workspace=@beacon/shared",
     "test": "tsc -p tsconfig.test.json && node --import tsx --input-type=module -e \"await import('./src/incident-state.test.ts'); await import('./src/worker-loop.test.ts')\""
   },
   "keywords": [],
@@ -13,6 +15,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@beacon/shared": "1.0.0",
     "dotenv": "^18.0.8",
     "pg": "^8.23.1",
     "zod": "^4.6.7"
