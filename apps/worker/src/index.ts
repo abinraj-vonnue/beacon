@@ -1,7 +1,11 @@
-import { pool } from "./db";
-import { executeHttpCheck } from "./http-check";
-import { claimDueMonitors } from "./monitor-claim";
-import { processCheckResult } from "./process-check-result";
+import { pool } from "./db.js";
+import { executeHttpCheck } from "./http-check.js";
+import {
+  claimDueMonitors,
+  rescheduleMonitorAfterFailure,
+} from "./monitor-claim.js";
+import { processCheckResult } from "./process-check-result.js";
+import { processBatch } from "./worker-loop.js";
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -10,39 +14,6 @@ function getErrorMessage(error: unknown): string {
 }
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function processBatch(): Promise<void> {
-  const monitors = await claimDueMonitors();
-
-  if (monitors.length === 0) {
-    return;
-  }
-
-  console.info("Claimed monitors", {
-    count: monitors.length,
-  });
-
-  for (const monitor of monitors) {
-    try {
-      const result = await executeHttpCheck(monitor);
-
-      await processCheckResult({
-        monitor,
-        result,
-      });
-
-      console.info("Monitor check processed", {
-        monitorId: monitor.id,
-        success: result.ok,
-        latencyMs: result.latencyMs,
-      });
-    } catch (error) {
-      console.error("Failed to process monitor check", {
-        monitorId: monitor.id,
-        message: getErrorMessage(error),
-      });
-    }
-  }
 }
 let shutdownRequested = false;
 let shutdownPromise: Promise<void> | undefined;
@@ -84,7 +55,12 @@ async function runWorker(): Promise<void> {
   });
   while (!shutdownRequested) {
     try {
-      await processBatch();
+      await processBatch({
+        claimDueMonitors,
+        executeHttpCheck,
+        processCheckResult,
+        rescheduleAfterFailure: rescheduleMonitorAfterFailure,
+      });
     } catch (error) {
       console.error("Worker batch failed", {
         message: getErrorMessage(error),

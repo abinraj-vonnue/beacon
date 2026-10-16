@@ -1,5 +1,5 @@
-import { PoolClient } from "pg";
-import { pool } from "./db";
+import type { PoolClient } from "pg";
+import { pool } from "./db.js";
 
 export type ClaimedMonitor = {
   id: string;
@@ -10,8 +10,9 @@ export type ClaimedMonitor = {
   expected_status_code: number;
   next_check_at: Date;
 };
-const DEFAULT_BATCH_SIZE = 10;
-const DEFAULT_LEASE_SECONDS = 60;
+const DEFAULT_BATCH_SIZE = 1;
+const DEFAULT_LEASE_SECONDS = 90;
+const PROCESSING_RETRY_DELAY_SECONDS = 5;
 
 export async function claimDueMonitors(
   batchSize = DEFAULT_BATCH_SIZE,
@@ -71,4 +72,15 @@ export async function claimDueMonitors(
   } finally {
     client.release();
   }
+}
+
+export async function rescheduleMonitorAfterFailure(
+  monitorId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE monitors
+     SET next_check_at = NOW() + ($2 * INTERVAL '1 second')
+     WHERE id = $1`,
+    [monitorId, PROCESSING_RETRY_DELAY_SECONDS],
+  );
 }
