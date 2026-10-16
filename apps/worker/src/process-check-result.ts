@@ -41,7 +41,7 @@ export async function processCheckResult({
       `SELECT id
        FROM incidents
        WHERE monitor_id = $1
-         AND closed_at IS NULL
+         AND status ='open'
        ORDER BY opened_at DESC
        LIMIT 1
        FOR UPDATE`,
