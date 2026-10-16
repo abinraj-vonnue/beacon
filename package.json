@@ -18,7 +18,8 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build:worker": "npm run build --workspace=worker",
+    "test": "npm run test --workspace=worker"
   },
   "private": "true",
   "workspaces": [

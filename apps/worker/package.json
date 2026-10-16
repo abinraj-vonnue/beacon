@@ -3,12 +3,26 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "devDependencies": {},
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "prebuild": "npm run build --workspace=@beacon/shared",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/apps/worker/src/index.js",
+    "pretest": "npm run build --workspace=@beacon/shared",
+    "test": "tsc -p tsconfig.test.json && node --import tsx --input-type=module -e \"await import('./src/incident-state.test.ts'); await import('./src/worker-loop.test.ts')\""
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@beacon/shared": "1.0.0",
+    "dotenv": "^18.0.8",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
 }
