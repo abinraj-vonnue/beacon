@@ -58,3 +58,13 @@ verified during Task 7.
 
 Task 8 documentation and Makefile changes must be verified from a clean
 checkout before the `v0.1` milestone is published.
+
+### Task 4 — Networking trace
+
+- **Capture:** `sudo tcpdump -i any -nn port 5432`
+- **API container:** `172.18.0.4`
+- **PostgreSQL container:** `172.18.0.2:5432`
+- **Observed path:** API container (`172.18.0.4`, ephemeral port `49338`) → Docker virtual Ethernet/bridge network → PostgreSQL container (`172.18.0.2:5432`).
+- **Evidence:** TCP payloads and acknowledgements were observed in both directions during a database-backed request.
+- **Key finding:** `tcpdump -i any` captures traffic on Docker virtual interfaces, allowing container-to-container database communication to be observed even when the traffic does not traverse the host's published PostgreSQL port.
+- **VM path:** Not yet traced; Beacon is currently running on the host rather than inside the Multipass VM.
