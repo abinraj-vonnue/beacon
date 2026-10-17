@@ -60,8 +60,10 @@ in `/home/deploy/.ssh/authorized_keys`. It checks the key file with
 `ssh-keygen` and aborts before changing SSH authentication settings if no
 usable key is present.
 
-The script validates the supplied public key and appends missing key lines
-without intentionally duplicating existing entries.
+The script validates every nonblank, noncomment line in the supplied file as
+one public key. It rejects private-key blocks and invalid lines before writing
+any supplied key to `authorized_keys`, then appends missing keys without
+duplicating existing entries.
 
 ## 3. Validate the script
 

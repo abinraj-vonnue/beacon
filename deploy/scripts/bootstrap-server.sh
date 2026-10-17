@@ -28,11 +28,30 @@ die() {
 }
 
 validate_public_key_file() {
-  local key_file="$1"
+  local key_file="$1" line line_number=0 valid_key_count=0 candidate_key
   command -v ssh-keygen >/dev/null 2>&1 ||
     die "ssh-keygen is required to validate public keys."
-  ssh-keygen -l -f "$key_file" >/dev/null 2>&1 ||
-    die "File does not contain a valid public key: $key_file"
+
+  if grep -Eq -- '^[[:space:]]*-----BEGIN .*PRIVATE KEY-----[[:space:]]*$' "$key_file"; then
+    die "Private-key material is not accepted: $key_file"
+  fi
+
+  candidate_key="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" == \#* ]] && continue
+
+    printf '%s\n' "$line" > "$candidate_key"
+    if ! ssh-keygen -l -f "$candidate_key" >/dev/null 2>&1; then
+      rm -f "$candidate_key"
+      die "Invalid public key on line $line_number of $key_file."
+    fi
+    valid_key_count=$((valid_key_count + 1))
+  done < "$key_file"
+  rm -f "$candidate_key"
+
+  ((valid_key_count > 0)) || die "No public keys found in $key_file."
 }
 
 validate_deploy_authorized_keys() {
