@@ -28,7 +28,8 @@ die() {
 }
 
 validate_public_key_file() {
-  local key_file="$1" line line_number=0 valid_key_count=0 candidate_key
+  local key_file="$1" plain_public_keys="${2:-0}"
+  local line line_number=0 valid_key_count=0 candidate_key key_type key_blob key_comment
   command -v ssh-keygen >/dev/null 2>&1 ||
     die "ssh-keygen is required to validate public keys."
 
@@ -42,7 +43,16 @@ validate_public_key_file() {
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
     [[ "$line" == \#* ]] && continue
 
-    printf '%s\n' "$line" > "$candidate_key"
+    if [[ "$plain_public_keys" -eq 1 ]]; then
+      read -r key_type key_blob key_comment <<< "$line"
+      if [[ -z "$key_type" || -z "$key_blob" ]]; then
+        rm -f "$candidate_key"
+        die "Malformed public key on line $line_number of $key_file."
+      fi
+      printf '%s %s\n' "$key_type" "$key_blob" > "$candidate_key"
+    else
+      printf '%s\n' "$line" > "$candidate_key"
+    fi
     if ! ssh-keygen -l -f "$candidate_key" >/dev/null 2>&1; then
       rm -f "$candidate_key"
       die "Invalid public key on line $line_number of $key_file."
@@ -263,7 +273,7 @@ apt-get install -y \
   ufw
 
 if [[ -n "$PUBLIC_KEY_FILE" ]]; then
-  validate_public_key_file "$PUBLIC_KEY_FILE"
+  validate_public_key_file "$PUBLIC_KEY_FILE" 1
 fi
 
 log "Creating the deploy user if necessary."
