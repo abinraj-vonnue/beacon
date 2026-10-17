@@ -15,12 +15,14 @@ help:
 	@echo "  make clean        Remove stopped Compose containers"
 
 .env:
-	@echo "Missing .env . Run cp .env.example .env"
+	@echo "Missing .env. Run 'cp .env.example .env' first."
 	@exit 1
 
 up: .env
 	$(COMPOSE) up --build -d
 
+
+down down-volumes restart ps logs clean: .env
 
 down:
 	$(COMPOSE) down

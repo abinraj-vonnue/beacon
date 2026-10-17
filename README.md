@@ -59,6 +59,10 @@ Change it before using the deployment outside a local development environment.
 
 Do not commit `.env` or put real credentials in `.env.example`.
 
+`DATABASE_URL` in the example uses `localhost` for applications run directly
+on your host. Docker Compose sets the API and worker connection separately,
+using the `db` service name inside the Compose network.
+
 ### 3. Start Beacon
 
 ```bash
