@@ -14,40 +14,54 @@ installs the systemd units, and starts Beacon.
 - Root access or an account with `sudo`.
 - The Beacon repository checked out on the server.
 - A valid Beacon `.env` file prepared manually.
-- An SSH public key for the `deploy` account, if one is not already configured.
+- A public SSH key for `deploy`, either already installed or supplied to the script.
 
 ## 1. Prepare the repository and environment
 
-Clone the repository or otherwise place a clean checkout on the server.
-
-From the repository root:
+From the repository root, create `.env` only if it does not already exist:
 
 ```bash
-cp .env.example .env
+if [ ! -e .env ]; then
+  cp .env.example .env
+fi
 ```
 
 Edit `.env` and set the required production values, including a strong,
-unique database password. Confirm that the file is not tracked by Git.
+unique database password. Do not overwrite a previously prepared environment
+file by copying the example over it.
+
+Set restrictive permissions and verify Git handling:
 
 ```bash
 chmod 600 .env
-git check-ignore .env
+if ! git check-ignore -q .env; then
+  echo ".env is not ignored by Git; stop and fix the ignore rules." >&2
+  exit 1
+fi
+
+if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+  echo ".env is tracked by Git; stop and remove it from version control safely." >&2
+  exit 1
+fi
 ```
 
-If `.env` already exists in `/opt/beacon`, the bootstrap script preserves it
-instead of replacing it. Review that file separately when changing production
-configuration.
+If `.env` already exists in `/opt/beacon`, the bootstrap script preserves it.
+Review that file separately when changing production configuration.
 
-Do not put production secrets in Git or in the bootstrap script.
+Never commit production secrets.
 
 ## 2. Prepare SSH access
 
-If the `deploy` account needs a public key, provide the public-key file when
+If the `deploy` account needs a public key, provide its public-key file when
 running the script. The private key must remain on the administrator's machine.
 
-The script appends the supplied public key if it is not already present.
-If no key file is supplied, the existing `deploy` account must already have
-working public-key access.
+If no key file is supplied, the script requires at least one valid public key
+in `/home/deploy/.ssh/authorized_keys`. It checks the key file with
+`ssh-keygen` and aborts before changing SSH authentication settings if no
+usable key is present.
+
+The script validates the supplied public key and appends missing key lines
+without intentionally duplicating existing entries.
 
 ## 3. Validate the script
 
@@ -55,11 +69,12 @@ From the repository root:
 
 ```bash
 bash -n deploy/scripts/bootstrap-server.sh
+python3 -m json.tool deploy/docker/daemon.json >/dev/null
 git diff --check
 ```
 
-Inspect the script and verify that `.env` contains the correct deployment
-values before running it.
+Inspect the script and confirm the environment values are correct before
+running it.
 
 ## 4. Run bootstrap
 
@@ -69,14 +84,25 @@ With a public key:
 sudo ./deploy/scripts/bootstrap-server.sh /path/to/deploy.pub
 ```
 
-If the `deploy` account already has the correct key:
+If the `deploy` account already has a working public key installed:
 
 ```bash
 sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
-The script must run as root. It is designed to be rerun without replacing
-an existing `/opt/beacon/.env`.
+The script must run as root. It is designed to be rerun without replacing an
+existing `/opt/beacon/.env`.
+
+Before enabling UFW, the script reads active `ssh.socket` TCP listeners when
+socket activation is running; otherwise it reads the effective SSH port from
+`sshd -T`. It allows each discovered TCP port. Confirm the configured port
+with `sudo systemctl show --property=Listen --value ssh.socket` for an active
+socket, or `sudo sshd -T | grep '^port '` otherwise. Check the resulting
+firewall rule with `sudo ufw status verbose`.
+
+The Docker daemon configuration is updated only when its desired settings
+differ. Existing unrelated daemon settings are preserved, and Docker is
+restarted only when the configuration changed while the daemon was active.
 
 ## 5. Verify SSH access before closing the current session
 
@@ -147,29 +173,31 @@ The expected environment-file mode is `600`, owned by `deploy`.
 
 Docker-published ports can bypass UFW filtering because Docker manages its own
 networking rules. Binding the API to loopback and not publishing PostgreSQL
-are important parts of the exposure controls. See
+are important exposure controls. See
 `docs/adr/0003-bind-published-ports-to-localhost.md`.
 
 ## 8. Operational notes
 
-- Manage Beacon through systemd:
+Manage Beacon through systemd:
 
-  ```bash
-  sudo systemctl status beacon.service
-  sudo systemctl restart beacon.service
-  sudo journalctl -u beacon.service -f
-  ```
+```bash
+sudo systemctl status beacon.service
+sudo systemctl restart beacon.service
+sudo journalctl -u beacon.service -f
+```
 
-- Do not use `make up` or `make down` while systemd owns the Compose stack.
-- The `deploy` account belongs to the `docker` group. Docker-group membership
-  effectively grants root-level privileges. Log out and back in before
-  expecting a new group membership to apply.
-- The weekly prune timer removes unused Docker images older than seven days.
-  Review the service journal if investigating a prune operation:
+Do not use `make up` or `make down` while systemd owns the Compose stack.
 
-  ```bash
-  sudo journalctl -u beacon-prune.service
-  ```
+The `deploy` account belongs to the `docker` group. Docker-group membership
+effectively grants root-level privileges. Log out and back in before
+expecting a new group membership to apply.
+
+The weekly prune timer removes unused Docker images older than seven days.
+Inspect the service journal when investigating a prune operation:
+
+```bash
+sudo journalctl -u beacon-prune.service
+```
 
 ## Recovery
 
@@ -178,6 +206,7 @@ Use the existing session or VM/provider console to inspect:
 
 ```bash
 sudo sshd -t
+sudo sshd -T | grep -E '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '
 sudo systemctl status ssh --no-pager
 sudo journalctl -u ssh --since today
 ```
