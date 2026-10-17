@@ -1,0 +1,17 @@
+[Unit]
+Description=Beacon monitoring stack
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/beacon
+ExecStart=/usr/bin/docker compose --env-file .env -f compose.yaml up
+ExecStop=/usr/bin/docker compose --env-file .env -f compose.yaml down
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
