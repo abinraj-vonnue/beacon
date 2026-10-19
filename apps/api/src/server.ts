@@ -9,13 +9,11 @@ export function buildServer() {
     logger: {
       level: config.LOG_LEVEL,
     },
+    trustProxy: config.TRUSTED_PROXY_IP ? [config.TRUSTED_PROXY_IP] : false,
+
+    bodyLimit: 1024 * 1024,
+    requestTimeout: 15_000,
   });
-
-  trustProxy: config.TRUSTED_PROXY_IP ? [config.TRUSTED_PROXY_IP] : false;
-
-  bodyLimit: 1024 * 1024;
-  requestTimeOut: 15_000;
-
   app.addHook("onRequest", (request, _reply, done) => {
     request.log.info(
       {
