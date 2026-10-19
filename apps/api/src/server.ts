@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { pool } from "./db.js";
 import { authenticateApiKey } from "./plugins/authenticate-api-keys.js";
 import { monitorRoutes } from "./modules/monitors/monitor.routes.js";
+import { publicStatusRoutes } from "./modules/public-status/public-status.routes.js";
 
 export function buildServer() {
   const app = Fastify({
@@ -47,6 +48,7 @@ export function buildServer() {
     status: "authenticated",
   }));
 
+  app.register(publicStatusRoutes);
   app.register(monitorRoutes);
 
   return app;

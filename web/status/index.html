@@ -1,0 +1,197 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Beacon Status</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      color-scheme: light dark;
+      --border: #8885;
+      --muted: #888;
+    }
+
+    body {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem;
+      line-height: 1.5;
+    }
+
+    header, .monitor, .summary {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+    }
+
+    h1, h2, h3 { margin-top: 0; }
+    .muted { color: var(--muted); }
+
+    .badge {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: .2rem .65rem;
+      font-weight: 600;
+      font-size: .9rem;
+    }
+
+    .up, .operational { color: #16803c; }
+    .down, .degraded { color: #d33; }
+    .unknown, .paused { color: #b88700; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: .75rem;
+    }
+
+    .metric { padding: .5rem 0; }
+    .metric strong { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="muted">BEACON / PUBLIC STATUS</p>
+    <h1>Service status</h1>
+    <p id="overall" class="badge unknown" role="status" aria-live="polite">
+      Loading status…
+    </p>
+    <p id="updated" class="muted">Fetching the latest status.</p>
+  </header>
+
+  <section aria-labelledby="monitors-title">
+    <h2 id="monitors-title">Monitored services</h2>
+    <p id="message" role="status" aria-live="polite"></p>
+    <div id="monitors"></div>
+  </section>
+
+  <script>
+    const overallLabels = {
+      operational: "All systems operational",
+      degraded: "Service disruption detected",
+      unknown: "Status unavailable",
+    };
+
+    const monitorLabels = {
+      up: "Operational",
+      down: "Down",
+      unknown: "Unknown / stale",
+      paused: "Paused",
+    };
+
+    const overall = document.querySelector("#overall");
+    const updated = document.querySelector("#updated");
+    const message = document.querySelector("#message");
+    const list = document.querySelector("#monitors");
+
+    function addText(parent, tag, text, className) {
+      const node = document.createElement(tag);
+      node.textContent = text;
+      if (className) node.className = className;
+      parent.append(node);
+      return node;
+    }
+
+    function formatDate(value) {
+      if (!value) return "No check recorded";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? "Unavailable"
+        : date.toLocaleString();
+    }
+
+    function formatPercent(value) {
+      return value == null ? "No data" : `${Number(value).toFixed(2)}%`;
+    }
+
+    function render(data) {
+      const overallStatus = overallLabels[data.status]
+        ? data.status
+        : "unknown";
+
+      overall.className = `badge ${overallStatus}`;
+      overall.textContent = overallLabels[overallStatus];
+      updated.textContent =
+        `Last refreshed: ${formatDate(data.generated_at)}`;
+
+      list.replaceChildren();
+      message.textContent = "";
+
+      if (!data.monitors || data.monitors.length === 0) {
+        message.textContent = "No monitor status is currently available.";
+        return;
+      }
+
+      for (const monitor of data.monitors) {
+        const section = document.createElement("article");
+        section.className = "monitor";
+
+        addText(section, "h3", monitor.name || "Unnamed service");
+
+        const state = monitorLabels[monitor.status]
+          ? monitor.status
+          : "unknown";
+
+        addText(
+          section,
+          "p",
+          monitorLabels[state],
+          `badge ${state}`,
+        );
+
+        const metrics = document.createElement("div");
+        metrics.className = "metrics";
+
+        const lastCheck = document.createElement("div");
+        lastCheck.className = "metric";
+        addText(lastCheck, "strong", "Last check");
+        addText(lastCheck, "span", formatDate(monitor.last_checked_at));
+        metrics.append(lastCheck);
+
+        const uptime24 = document.createElement("div");
+        uptime24.className = "metric";
+        addText(uptime24, "strong", "Uptime · 24 hours");
+        addText(uptime24, "span", formatPercent(monitor.uptime_24h_percent));
+        metrics.append(uptime24);
+
+        const uptime7 = document.createElement("div");
+        uptime7.className = "metric";
+        addText(uptime7, "strong", "Uptime · 7 days");
+        addText(uptime7, "span", formatPercent(monitor.uptime_7d_percent));
+        metrics.append(uptime7);
+
+        section.append(metrics);
+        list.append(section);
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const response = await fetch("/api/public/status", {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error("Status endpoint unavailable");
+        }
+
+        render(await response.json());
+      } catch {
+        overall.className = "badge unknown";
+        overall.textContent = "Status unavailable";
+        updated.textContent = "Unable to retrieve current status.";
+        message.textContent = "Please try again shortly.";
+      }
+    }
+
+    refreshStatus();
+    setInterval(refreshStatus, 60_000);
+  </script>
+</body>
+</html>
