@@ -11,6 +11,23 @@ export function buildServer() {
     },
   });
 
+  trustProxy: config.TRUSTED_PROXY_IP ? [config.TRUSTED_PROXY_IP] : false;
+
+  bodyLimit: 1024 * 1024;
+  requestTimeOut: 15_000;
+
+  app.addHook("onRequest", (request, _reply, done) => {
+    request.log.info(
+      {
+        clientIp: request.ip,
+        proxyPeerIp: request.raw.socket.remoteAddress,
+        protocol: request.protocol,
+      },
+      "Request recieved",
+    );
+    done();
+  });
+
   app.get("/healthz", async () => {
     return { status: "ok" };
   });
