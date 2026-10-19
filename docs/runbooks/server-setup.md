@@ -134,11 +134,15 @@ sudo ./deploy/scripts/bootstrap-server.sh
 The script must run as root. It validates the environment file, repository
 inputs, deploy key, Ubuntu platform, and TLS files before system changes. It
 does not replace an existing `/opt/beacon/.env`. If UFW is already installed,
-the script first removes its explicit `3000/tcp`, `80/tcp`, and `443/tcp`
-rules, including repeated entries, before package work. After installing base
-packages and validating deploy SSH access, it discovers and allows every SSH
-port, sets the default policies, and enables UFW. It does not allow HTTP or
-HTTPS at this stage.
+the script stops an already active Nginx service, then immediately discovers
+SSH listeners, removes its explicit `80/tcp`, `443/tcp`, `3000/tcp`, and
+`5432/tcp` rules (including repeated entries), allows the discovered SSH
+ports, sets the default policies, and enables UFW. If UFW is absent, it stops
+an already active Nginx service, installs the base prerequisites, and then
+runs that same firewall preparation before installing Nginx. Neither path
+allows HTTP or HTTPS during firewall preparation. If preparation fails,
+Nginx stays stopped so an inactive or partially configured firewall cannot
+leave the web service reachable.
 
 Nginx is installed only after UFW is enabled, so its package's default site
 cannot be reached through the script-managed web ports. The script installs
@@ -154,7 +158,8 @@ Unrelated existing UFW rules are preserved. Review `sudo ufw status numbered`
 on an existing host; additional allow rules may expose ports beyond the
 Beacon-managed set. A failed preflight exits without changing UFW, so existing
 rules remain as they were until preflight succeeds and bootstrap can perform
-the cleanup.
+the cleanup. If UFW's added-rule output is unrecognized or cannot be read, the
+script stops with an error instead of attempting to edit the firewall.
 
 Before enabling UFW, the script reads active `ssh.socket` TCP listeners when
 socket activation is running; otherwise it reads the effective SSH port from

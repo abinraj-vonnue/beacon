@@ -21,6 +21,7 @@ SSH_HARDENING_BACKUP=""
 SSH_HARDENING_PREVIOUSLY_EXISTED=0
 SSH_PORTS=()
 UFW_ADDED_RULES=""
+UFW_PREPARED=0
 WEB_PORT_RULES_PENDING=0
 
 log() {
@@ -241,6 +242,42 @@ remove_ufw_added_rule() {
   done
 }
 
+prepare_firewall() {
+  local ssh_port
+
+  log "Preparing UFW before package operations that may start public services."
+  install -d -m 0755 /run/sshd
+  discover_ssh_ports
+
+  # Validate the UFW output before making any changes, then remove only rules
+  # managed by this script. Unrelated rules remain untouched.
+  refresh_ufw_added_rules
+  remove_ufw_added_rule 80/tcp
+  remove_ufw_added_rule 443/tcp
+  remove_ufw_added_rule 3000/tcp
+  remove_ufw_added_rule 5432/tcp
+
+  for ssh_port in "${SSH_PORTS[@]}"; do
+    log "Allowing configured SSH port $ssh_port/tcp through UFW."
+    ufw allow "$ssh_port/tcp"
+  done
+
+  ufw default deny incoming
+  ufw default allow outgoing
+  ufw --force enable
+  UFW_PREPARED=1
+  log "UFW is enabled; script-managed HTTP/HTTPS rules remain closed until bootstrap succeeds."
+  log "Unrelated existing UFW rules are preserved; review 'ufw status numbered' for additional allowed ports."
+}
+
+stop_nginx_before_firewall_transition() {
+  if systemctl is-active --quiet nginx.service; then
+    log "Stopping active Nginx while the firewall is being prepared."
+    systemctl stop nginx.service ||
+      die "Could not stop Nginx before firewall preparation; refusing to continue."
+  fi
+}
+
 rollback_web_port_rules_on_exit() {
   local exit_status=$?
   trap - EXIT
@@ -347,15 +384,12 @@ fi
 [[ -f "$TLS_KEY" && -s "$TLS_KEY" ]] ||
   die "TLS private key $TLS_KEY is missing or empty. Transfer the certificate and key using the Phase 2 Task 3 Multipass transfer procedure before bootstrapping."
 
-# On reruns, close previously opened Beacon web ports before package work.
-# A fresh host without UFW has no such script-managed rules yet.
+# Prepare an existing firewall immediately after preflight. If UFW is absent,
+# install only its base prerequisites first, then use the same preparation
+# path before installing Nginx.
+stop_nginx_before_firewall_transition
 if command -v ufw >/dev/null 2>&1; then
-  log "Closing prior Beacon web, API and database UFW rules before package changes."
-  refresh_ufw_added_rules
-  remove_ufw_added_rule 80/tcp
-  remove_ufw_added_rule 443/tcp
-  remove_ufw_added_rule 3000/tcp
-  remove_ufw_added_rule 5432/tcp
+  prepare_firewall
 fi
 
 log "Installing required Ubuntu packages."
@@ -369,6 +403,10 @@ apt-get install -y \
   rsync \
   python3 \
   ufw
+
+if [[ "$UFW_PREPARED" -eq 0 ]]; then
+  prepare_firewall
+fi
 
 log "Creating the deploy user if necessary."
 if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
@@ -403,26 +441,6 @@ if [[ -n "$PUBLIC_KEY_FILE" ]]; then
 fi
 
 validate_deploy_authorized_keys
-
-log "Closing prior Beacon web, API and database UFW rules."
-refresh_ufw_added_rules
-remove_ufw_added_rule 80/tcp
-remove_ufw_added_rule 443/tcp
-remove_ufw_added_rule 3000/tcp
-remove_ufw_added_rule 5432/tcp
-
-install -d -m 0755 /run/sshd
-discover_ssh_ports
-for ssh_port in "${SSH_PORTS[@]}"; do
-  log "Allowing configured SSH port $ssh_port/tcp through UFW."
-  ufw allow "$ssh_port/tcp"
-done
-
-ufw default deny incoming
-ufw default allow outgoing
-ufw --force enable
-log "UFW is enabled; script-managed HTTP/HTTPS rules remain closed until bootstrap succeeds."
-log "Unrelated existing UFW rules are preserved; review 'ufw status numbered' for additional allowed ports."
 
 install -d -o root -g root -m 0755 /etc/ssl/beacon
 chown root:root "$TLS_CERT" "$TLS_KEY"
