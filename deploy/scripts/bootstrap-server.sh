@@ -14,11 +14,14 @@ readonly SSH_HARDENING="/etc/ssh/sshd_config.d/00-beacon-hardening.conf"
 readonly DOCKER_CONFIG="/etc/docker/daemon.json"
 readonly TLS_CERT="/etc/ssl/beacon/beacon.test.pem"
 readonly TLS_KEY="/etc/ssl/beacon/beacon.test-key.pem"
+readonly UFW_ADDED_RULES_HEADER="Added user rules (see 'ufw status' for running firewall):"
 DOCKER_CONFIG_CHANGED=0
 SSH_HARDENING_PENDING=0
 SSH_HARDENING_BACKUP=""
 SSH_HARDENING_PREVIOUSLY_EXISTED=0
 SSH_PORTS=()
+UFW_ADDED_RULES=""
+WEB_PORT_RULES_PENDING=0
 
 log() {
   printf '[beacon-bootstrap] %s\n' "$*"
@@ -187,6 +190,71 @@ PY
   done <<< "$ssh_port_lines"
 }
 
+refresh_ufw_added_rules() {
+  local output line header_seen=0
+  output="$(ufw show added)" ||
+    die "Could not read UFW's added rules; refusing to change firewall access."
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == "$UFW_ADDED_RULES_HEADER" ]]; then
+      header_seen=1
+    elif [[ "$line" == "(None)" ]]; then
+      :
+    elif [[ "$line" == ufw\ * ]]; then
+      :
+    else
+      die "Unexpected 'ufw show added' output. Review UFW manually before rerunning bootstrap: $line"
+    fi
+  done <<< "$output"
+
+  ((header_seen == 1)) ||
+    die "Could not recognize 'ufw show added' output. Review UFW manually before rerunning bootstrap."
+  UFW_ADDED_RULES="$output"
+}
+
+count_ufw_added_rule() {
+  local expected="$1" line count=0
+  while IFS= read -r line; do
+    if [[ "$line" == "$expected" ]]; then
+      count=$((count + 1))
+    fi
+  done <<< "$UFW_ADDED_RULES"
+  printf '%s\n' "$count"
+}
+
+remove_ufw_added_rule() {
+  local rule="$1" before after
+  while true; do
+    refresh_ufw_added_rules
+    before="$(count_ufw_added_rule "ufw allow $rule")"
+    ((before > 0)) || return 0
+
+    ufw --force delete allow "$rule" ||
+      die "Could not remove UFW rule 'ufw allow $rule'. Review UFW manually."
+
+    refresh_ufw_added_rules
+    after="$(count_ufw_added_rule "ufw allow $rule")"
+    if ((after >= before)); then
+      die "UFW rule 'ufw allow $rule' did not disappear after deletion. Review UFW manually."
+    fi
+  done
+}
+
+rollback_web_port_rules_on_exit() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ "$WEB_PORT_RULES_PENDING" -eq 1 ]]; then
+    if ! ufw --force delete allow 80/tcp >/dev/null 2>&1; then
+      log "WARNING: could not confirm removal of 80/tcp during rollback; inspect 'ufw status numbered'."
+    fi
+    if ! ufw --force delete allow 443/tcp >/dev/null 2>&1; then
+      log "WARNING: could not confirm removal of 443/tcp during rollback; inspect 'ufw status numbered'."
+    fi
+  fi
+  exit "$exit_status"
+}
+
 configure_ssh_hardening() {
   local candidate effective_config deploy_config ssh_host
   SSH_HARDENING_BACKUP="$(mktemp)"
@@ -238,6 +306,9 @@ EOF
 }
 
 [[ "${EUID}" -eq 0 ]] || die "Run this script with sudo or as root."
+[[ -r /etc/os-release ]] || die "Cannot determine the operating system; expected Ubuntu."
+. /etc/os-release
+[[ "${ID:-}" == "ubuntu" ]] || die "This script supports Ubuntu only."
 [[ -f "$REPO_ROOT/compose.yaml" ]] || die "compose.yaml not found at $REPO_ROOT."
 [[ -f "$REPO_ROOT/deploy/systemd/beacon.service" ]] ||
   die "Beacon systemd unit is missing."
@@ -259,8 +330,9 @@ PUBLIC_KEY_FILE="${1:-}"
 if [[ -n "$PUBLIC_KEY_FILE" ]]; then
   [[ -f "$PUBLIC_KEY_FILE" ]] || die "Public key file not found: $PUBLIC_KEY_FILE"
   [[ -s "$PUBLIC_KEY_FILE" ]] || die "Public key file is empty."
-elif [[ ! -s "/home/$DEPLOY_USER/.ssh/authorized_keys" ]]; then
-  die "No key file supplied and $DEPLOY_USER has no authorized_keys; refusing to harden SSH."
+  validate_public_key_file "$PUBLIC_KEY_FILE" 1
+else
+  validate_deploy_authorized_keys
 fi
 
 # Never overwrite an existing production environment file.
@@ -275,10 +347,16 @@ fi
 [[ -f "$TLS_KEY" && -s "$TLS_KEY" ]] ||
   die "TLS private key $TLS_KEY is missing or empty. Transfer the certificate and key using the Phase 2 Task 3 Multipass transfer procedure before bootstrapping."
 
-install -d -o root -g root -m 0755 /etc/ssl/beacon
-chown root:root "$TLS_CERT" "$TLS_KEY"
-chmod 0644 "$TLS_CERT"
-chmod 0600 "$TLS_KEY"
+# On reruns, close previously opened Beacon web ports before package work.
+# A fresh host without UFW has no such script-managed rules yet.
+if command -v ufw >/dev/null 2>&1; then
+  log "Closing prior Beacon web, API and database UFW rules before package changes."
+  refresh_ufw_added_rules
+  remove_ufw_added_rule 80/tcp
+  remove_ufw_added_rule 443/tcp
+  remove_ufw_added_rule 3000/tcp
+  remove_ufw_added_rule 5432/tcp
+fi
 
 log "Installing required Ubuntu packages."
 export DEBIAN_FRONTEND=noninteractive
@@ -291,10 +369,6 @@ apt-get install -y \
   rsync \
   python3 \
   ufw
-
-if [[ -n "$PUBLIC_KEY_FILE" ]]; then
-  validate_public_key_file "$PUBLIC_KEY_FILE" 1
-fi
 
 log "Creating the deploy user if necessary."
 if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
@@ -330,35 +404,35 @@ fi
 
 validate_deploy_authorized_keys
 
-log "Configuring UFW before installing Nginx."
-ufw default deny incoming
-ufw default allow outgoing
+log "Closing prior Beacon web, API and database UFW rules."
+refresh_ufw_added_rules
+remove_ufw_added_rule 80/tcp
+remove_ufw_added_rule 443/tcp
+remove_ufw_added_rule 3000/tcp
+remove_ufw_added_rule 5432/tcp
+
 install -d -m 0755 /run/sshd
 discover_ssh_ports
 for ssh_port in "${SSH_PORTS[@]}"; do
   log "Allowing configured SSH port $ssh_port/tcp through UFW."
   ufw allow "$ssh_port/tcp"
 done
-ufw allow 80/tcp
-ufw allow 443/tcp
 
-# Remove only the temporary API rule, if it exists. Keep unrelated UFW rules.
-added_ufw_rules="$(ufw show added)" ||
-  die "Could not inspect existing UFW rules before removing the temporary API rule."
-if grep -Eq '^[[:space:]]*\+?[[:space:]]*ufw allow 3000/tcp([[:space:]]|$)' <<< "$added_ufw_rules"; then
-  log "Removing the temporary 3000/tcp UFW allow rule."
-  ufw --force delete allow 3000/tcp
-fi
-# Do not open ports 3000 or 5432.
+ufw default deny incoming
+ufw default allow outgoing
 ufw --force enable
+log "UFW is enabled; script-managed HTTP/HTTPS rules remain closed until bootstrap succeeds."
+log "Unrelated existing UFW rules are preserved; review 'ufw status numbered' for additional allowed ports."
+
+install -d -o root -g root -m 0755 /etc/ssl/beacon
+chown root:root "$TLS_CERT" "$TLS_KEY"
+chmod 0644 "$TLS_CERT"
+chmod 0600 "$TLS_KEY"
 
 log "Installing Nginx behind the enabled firewall."
 apt-get install -y nginx
 
 log "Installing Docker from the official Docker Ubuntu repository."
-. /etc/os-release
-[[ "$ID" == "ubuntu" ]] || die "This script supports Ubuntu only."
-
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
   -o /etc/apt/keyrings/docker.asc
@@ -461,6 +535,24 @@ systemctl enable docker.service
 systemctl enable beacon.service
 systemctl enable --now beacon-prune.timer
 systemctl restart beacon.service
+
+systemctl is-active --quiet nginx.service ||
+  die "Nginx is not active after configuration and startup; leaving HTTP/HTTPS closed."
+systemctl is-active --quiet beacon.service ||
+  die "Beacon is not active after startup; leaving HTTP/HTTPS closed."
+
+log "Opening HTTP and HTTPS after Nginx and Beacon are running."
+WEB_PORT_RULES_PENDING=1
+trap rollback_web_port_rules_on_exit EXIT
+ufw allow 80/tcp
+ufw allow 443/tcp
+refresh_ufw_added_rules
+[[ "$(count_ufw_added_rule 'ufw allow 80/tcp')" -gt 0 ]] ||
+  die "UFW did not confirm the 80/tcp allow rule; leaving web ports closed."
+[[ "$(count_ufw_added_rule 'ufw allow 443/tcp')" -gt 0 ]] ||
+  die "UFW did not confirm the 443/tcp allow rule; leaving web ports closed."
+WEB_PORT_RULES_PENDING=0
+trap - EXIT
 
 log "Bootstrap completed. Test deploy SSH access in a second terminal."
 log "Check: systemctl status beacon.service"

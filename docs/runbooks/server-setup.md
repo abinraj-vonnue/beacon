@@ -131,21 +131,38 @@ If the `deploy` account already has a working public key installed:
 sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
-The script must run as root. It is designed to be rerun without replacing an
-existing `/opt/beacon/.env`. After validating deploy SSH access, it configures
-and enables UFW before installing Nginx. The firewall allows all discovered
-SSH ports plus `80/tcp` and `443/tcp`, and removes a prior `3000/tcp` allow
-rule if present. It then installs the tracked Nginx site and rate-limit
-configuration, publishes `web/status/` under `/var/www/beacon/`, validates
-Nginx with `nginx -t`, and only then explicitly starts or reloads the service.
+The script must run as root. It validates the environment file, repository
+inputs, deploy key, Ubuntu platform, and TLS files before system changes. It
+does not replace an existing `/opt/beacon/.env`. If UFW is already installed,
+the script first removes its explicit `3000/tcp`, `80/tcp`, and `443/tcp`
+rules, including repeated entries, before package work. After installing base
+packages and validating deploy SSH access, it discovers and allows every SSH
+port, sets the default policies, and enables UFW. It does not allow HTTP or
+HTTPS at this stage.
+
+Nginx is installed only after UFW is enabled, so its package's default site
+cannot be reached through the script-managed web ports. The script installs
+the tracked Nginx site and rate-limit configuration, publishes `web/status/`
+under `/var/www/beacon/`, validates with `nginx -t`, then starts or reloads
+Nginx. After the existing systemd setup and Beacon service start both Nginx
+and Beacon are confirmed active, it adds `80/tcp` and `443/tcp`. If a step
+after cleanup fails, the script leaves those managed rules closed; if either
+final allow operation fails, it attempts to remove both rules before exiting.
 The status directory is synchronized idempotently.
+
+Unrelated existing UFW rules are preserved. Review `sudo ufw status numbered`
+on an existing host; additional allow rules may expose ports beyond the
+Beacon-managed set. A failed preflight exits without changing UFW, so existing
+rules remain as they were until preflight succeeds and bootstrap can perform
+the cleanup.
 
 Before enabling UFW, the script reads active `ssh.socket` TCP listeners when
 socket activation is running; otherwise it reads the effective SSH port from
-`sshd -T`. It allows each discovered TCP port. Confirm the configured port
-with `sudo systemctl show --property=Listen --value ssh.socket` for an active
+`sshd -T`. It allows each discovered TCP port before setting the deny-incoming
+policy. Confirm the configured port with
+`sudo systemctl show --property=Listen --value ssh.socket` for an active
 socket, or `sudo sshd -T | grep '^port '` otherwise. Check the resulting
-firewall rule with `sudo ufw status verbose`.
+firewall rules with `sudo ufw status verbose`.
 
 The Docker daemon configuration is updated only when its desired settings
 differ. Existing unrelated daemon settings are preserved, and Docker is
@@ -215,9 +232,11 @@ Check firewall status:
 sudo ufw status verbose
 ```
 
-On a fresh VM using the standard SSH port, the active inbound TCP rules should
-allow only `22`, `80`, and `443`. Confirm the API remains loopback-only and
-Nginx listens on the public web ports:
+On a fresh VM using the standard SSH port, the final inbound TCP allow rules
+should be `22`, `80`, and `443`. On an existing host, separately review and
+preserve unrelated rules instead of assuming these are the only allowed
+ports. Confirm the API remains loopback-only and Nginx listens on the public
+web ports:
 
 ```bash
 sudo ufw status numbered
@@ -243,8 +262,11 @@ The expected environment-file mode is `600`, owned by `deploy`.
 - SSH is allowed through UFW.
 - The API is published on `127.0.0.1:3000`, not on all interfaces.
 - PostgreSQL is not published to the host network.
-- UFW allows HTTP and HTTPS on ports `80` and `443` alongside the detected
-  SSH port. It removes the temporary `3000/tcp` allow rule if present.
+- UFW allows HTTP and HTTPS on ports `80` and `443` only after Nginx and Beacon
+  are active. It removes explicit `3000/tcp`, `80/tcp`, and `443/tcp` rules
+  during reconfiguration, including repeated rules.
+- The bootstrap does not open ports `3000` or `5432`; its cleanup removes an
+  existing explicit `5432/tcp` rule as well.
 - Do not add UFW rules opening ports `3000` or `5432`.
 
 Docker-published ports can bypass UFW filtering because Docker manages its own
