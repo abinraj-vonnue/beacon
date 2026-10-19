@@ -33,6 +33,8 @@ die() {
   exit 1
 }
 
+source "$REPO_ROOT/deploy/scripts/lib/https-readiness.sh"
+
 validate_public_key_file() {
   local key_file="$1" plain_public_keys="${2:-0}"
   local line line_number=0 valid_key_count=0 candidate_key key_type key_blob key_comment
@@ -581,9 +583,7 @@ log "Checking the public HTTPS routes locally before opening the firewall."
 curl --fail --silent --show-error --max-time 10 --resolve beacon.test:443:127.0.0.1 \
   --insecure https://beacon.test/ >/dev/null ||
   die "Local HTTPS status-page check failed; leaving HTTP/HTTPS closed."
-curl --fail --silent --show-error --max-time 10 --resolve beacon.test:443:127.0.0.1 \
-  --insecure https://beacon.test/readyz >/dev/null ||
-  die "Local HTTPS readiness check failed; leaving HTTP/HTTPS closed."
+wait_for_https_readiness https://beacon.test/readyz 120 2
 
 log "Opening HTTP and HTTPS after Nginx and Beacon are running."
 WEB_PORT_RULES_PENDING=1
