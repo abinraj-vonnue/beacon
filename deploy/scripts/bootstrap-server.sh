@@ -12,6 +12,8 @@ readonly DEPLOY_USER="deploy"
 readonly DEPLOY_DIR="/opt/beacon"
 readonly SSH_HARDENING="/etc/ssh/sshd_config.d/00-beacon-hardening.conf"
 readonly DOCKER_CONFIG="/etc/docker/daemon.json"
+readonly TLS_CERT="/etc/ssl/beacon/beacon.test.pem"
+readonly TLS_KEY="/etc/ssl/beacon/beacon.test-key.pem"
 DOCKER_CONFIG_CHANGED=0
 SSH_HARDENING_PENDING=0
 SSH_HARDENING_BACKUP=""
@@ -245,6 +247,12 @@ EOF
   die "Prune timer unit is missing."
 [[ -f "$REPO_ROOT/deploy/docker/daemon.json" ]] ||
   die "Docker daemon configuration is missing."
+[[ -f "$REPO_ROOT/deploy/nginx/beacon.conf" ]] ||
+  die "Nginx site configuration is missing."
+[[ -f "$REPO_ROOT/deploy/nginx/conf.d/beacon-ratelimit.conf" ]] ||
+  die "Nginx rate-limit configuration is missing."
+[[ -d "$REPO_ROOT/web/status" ]] ||
+  die "Public status page source directory is missing."
 
 PUBLIC_KEY_FILE="${1:-}"
 
@@ -260,6 +268,18 @@ if [[ ! -f "$DEPLOY_DIR/.env" && ! -f "$REPO_ROOT/.env" ]]; then
   die "No .env found. Prepare one in the repository before bootstrapping."
 fi
 
+# Certificates are provisioned separately through the Phase 2 Task 3
+# Multipass transfer procedure. Check them before package or system changes.
+[[ -f "$TLS_CERT" && -s "$TLS_CERT" ]] ||
+  die "TLS certificate $TLS_CERT is missing or empty. Transfer the certificate and key using the Phase 2 Task 3 Multipass transfer procedure before bootstrapping."
+[[ -f "$TLS_KEY" && -s "$TLS_KEY" ]] ||
+  die "TLS private key $TLS_KEY is missing or empty. Transfer the certificate and key using the Phase 2 Task 3 Multipass transfer procedure before bootstrapping."
+
+install -d -o root -g root -m 0755 /etc/ssl/beacon
+chown root:root "$TLS_CERT" "$TLS_KEY"
+chmod 0644 "$TLS_CERT"
+chmod 0600 "$TLS_KEY"
+
 log "Installing required Ubuntu packages."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -268,6 +288,7 @@ apt-get install -y \
   curl \
   gnupg \
   openssh-server \
+  nginx \
   rsync \
   python3 \
   ufw
@@ -374,6 +395,29 @@ rsync -a \
 chown "$DEPLOY_USER:$DEPLOY_USER" "$DEPLOY_DIR/.env"
 chmod 0600 "$DEPLOY_DIR/.env"
 
+log "Installing the Nginx site and public status page."
+install -m 0644 "$DEPLOY_DIR/deploy/nginx/beacon.conf" \
+  /etc/nginx/sites-available/beacon
+install -m 0644 "$DEPLOY_DIR/deploy/nginx/conf.d/beacon-ratelimit.conf" \
+  /etc/nginx/conf.d/beacon-ratelimit.conf
+ln -sfn /etc/nginx/sites-available/beacon /etc/nginx/sites-enabled/beacon
+if [[ -L /etc/nginx/sites-enabled/default ]]; then
+  rm -f /etc/nginx/sites-enabled/default
+fi
+install -d -m 0755 /var/www/beacon
+rsync -a --delete "$DEPLOY_DIR/web/status/" /var/www/beacon/
+
+log "Validating the Nginx configuration."
+if ! nginx -t; then
+  die "Nginx configuration validation failed; refusing to start or reload Nginx."
+fi
+systemctl enable nginx.service
+if systemctl is-active --quiet nginx.service; then
+  systemctl reload nginx.service
+else
+  systemctl start nginx.service
+fi
+
 log "Installing systemd units."
 install -m 0644 "$DEPLOY_DIR/deploy/systemd/beacon.service" \
   /etc/systemd/system/beacon.service
@@ -391,6 +435,16 @@ for ssh_port in "${SSH_PORTS[@]}"; do
   log "Allowing configured SSH port $ssh_port/tcp through UFW."
   ufw allow "$ssh_port/tcp"
 done
+ufw allow 80/tcp
+ufw allow 443/tcp
+
+# Remove only the temporary API rule, if it exists. Keep unrelated UFW rules.
+added_ufw_rules="$(ufw show added)" ||
+  die "Could not inspect existing UFW rules before removing the temporary API rule."
+if grep -Eq '^[[:space:]]*\+?[[:space:]]*ufw allow 3000/tcp([[:space:]]|$)' <<< "$added_ufw_rules"; then
+  log "Removing the temporary 3000/tcp UFW allow rule."
+  ufw --force delete allow 3000/tcp
+fi
 # Do not open ports 3000 or 5432.
 ufw --force enable
 

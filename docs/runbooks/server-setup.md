@@ -4,9 +4,10 @@
 
 Provision an Ubuntu server for Beacon using the idempotent bootstrap script.
 
-The script installs Docker Engine and the Compose plugin, configures Docker
-log rotation, provisions the `deploy` account, hardens SSH, configures UFW,
-installs the systemd units, and starts Beacon.
+The script installs Docker Engine, the Compose plugin and Nginx, configures
+Docker log rotation, provisions the `deploy` account, hardens SSH, configures
+UFW, installs the Beacon HTTPS site and public status page, installs the
+systemd units, and starts Beacon.
 
 ## Prerequisites
 
@@ -15,6 +16,8 @@ installs the systemd units, and starts Beacon.
 - The Beacon repository checked out on the server.
 - A valid Beacon `.env` file prepared manually.
 - A public SSH key for `deploy`, either already installed or supplied to the script.
+- The Beacon TLS certificate and private key available on the administrator's
+  machine for transfer to the server. The script will not generate them.
 
 ## 1. Prepare the repository and environment
 
@@ -65,7 +68,43 @@ one public key. It rejects private-key blocks and invalid lines before writing
 any supplied key to `authorized_keys`, then appends missing keys without
 duplicating existing entries.
 
-## 3. Validate the script
+## 3. Transfer the TLS certificate and private key
+
+Phase 2 Task 3 provisions the local `beacon.test` certificate. Before running
+bootstrap, transfer those existing files from the administrator's machine to
+the VM. Do not put either file in the repository. Keep the private-key file
+restricted to the administrator on the source machine:
+
+```bash
+chmod 600 /path/to/beacon.test-key.pem
+multipass transfer /path/to/beacon.test.pem beacon-vm:/home/ubuntu/beacon.test.pem
+multipass transfer /path/to/beacon.test-key.pem beacon-vm:/home/ubuntu/beacon.test-key.pem
+
+multipass exec beacon-vm -- sudo install -d -o root -g root -m 0755 /etc/ssl/beacon
+multipass exec beacon-vm -- sudo install -o root -g root -m 0644 \
+  /home/ubuntu/beacon.test.pem /etc/ssl/beacon/beacon.test.pem
+multipass exec beacon-vm -- sudo install -o root -g root -m 0600 \
+  /home/ubuntu/beacon.test-key.pem /etc/ssl/beacon/beacon.test-key.pem
+multipass exec beacon-vm -- rm -f \
+  /home/ubuntu/beacon.test.pem /home/ubuntu/beacon.test-key.pem
+```
+
+Confirm the files exist and have the intended ownership and permissions. Do
+not print or display the private-key contents:
+
+```bash
+multipass exec beacon-vm -- sudo test -s /etc/ssl/beacon/beacon.test.pem
+multipass exec beacon-vm -- sudo test -s /etc/ssl/beacon/beacon.test-key.pem
+multipass exec beacon-vm -- sudo stat -c '%U:%G %a %n' \
+  /etc/ssl/beacon/beacon.test.pem /etc/ssl/beacon/beacon.test-key.pem
+```
+
+Expected modes are `root:root 644` for the certificate and `root:root 600`
+for the private key. Bootstrap checks both files before package installation,
+then enforces these ownership and permission settings. If the files are
+missing, repeat the Phase 2 Task 3 Multipass transfer before bootstrapping.
+
+## 4. Validate the script
 
 From the repository root:
 
@@ -78,7 +117,7 @@ git diff --check
 Inspect the script and confirm the environment values are correct before
 running it.
 
-## 4. Run bootstrap
+## 5. Run bootstrap
 
 With a public key:
 
@@ -93,7 +132,12 @@ sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
 The script must run as root. It is designed to be rerun without replacing an
-existing `/opt/beacon/.env`.
+existing `/opt/beacon/.env`. It installs the tracked Nginx site and rate-limit
+configuration, publishes `web/status/` under `/var/www/beacon/`, validates
+Nginx with `nginx -t`, and only then starts or reloads the service. The status
+directory is synchronized idempotently. The UFW rules allow discovered SSH
+ports plus `80/tcp` and `443/tcp`; a prior `3000/tcp` allow rule is removed if
+present.
 
 Before enabling UFW, the script reads active `ssh.socket` TCP listeners when
 socket activation is running; otherwise it reads the effective SSH port from
@@ -106,7 +150,7 @@ The Docker daemon configuration is updated only when its desired settings
 differ. Existing unrelated daemon settings are preserved, and Docker is
 restarted only when the configuration changed while the daemon was active.
 
-## 5. Verify SSH access before closing the current session
+## 6. Verify SSH access before closing the current session
 
 Keep the current administrative session open. From a second terminal, test:
 
@@ -123,7 +167,7 @@ by the hardening configuration.
 If the new login fails, use the still-open session or the VM/provider console
 to diagnose the issue.
 
-## 6. Verify the deployment
+## 7. Verify the deployment
 
 On the server:
 
@@ -140,6 +184,24 @@ Check API readiness locally:
 curl -fsS http://127.0.0.1:3000/readyz
 ```
 
+Validate Nginx and its service:
+
+```bash
+sudo nginx -t
+sudo systemctl status nginx.service --no-pager
+```
+
+Check HTTPS and the public status page from the VM, using the local TLS
+certificate for this development hostname:
+
+```bash
+curl -kfsS --resolve beacon.test:443:127.0.0.1 https://beacon.test/
+curl -kfsS --resolve beacon.test:443:127.0.0.1 https://beacon.test/readyz
+```
+
+The first request should return the Beacon status page; the second should
+return the API readiness response through Nginx.
+
 Check listening sockets:
 
 ```bash
@@ -150,6 +212,15 @@ Check firewall status:
 
 ```bash
 sudo ufw status verbose
+```
+
+On a fresh VM using the standard SSH port, the active inbound TCP rules should
+allow only `22`, `80`, and `443`. Confirm the API remains loopback-only and
+Nginx listens on the public web ports:
+
+```bash
+sudo ufw status numbered
+sudo ss -ltnp
 ```
 
 Check Docker logging configuration:
@@ -166,11 +237,13 @@ sudo stat -c '%U:%G %a %n' /opt/beacon/.env
 
 The expected environment-file mode is `600`, owned by `deploy`.
 
-## 7. Network exposure
+## 8. Network exposure
 
 - SSH is allowed through UFW.
 - The API is published on `127.0.0.1:3000`, not on all interfaces.
 - PostgreSQL is not published to the host network.
+- UFW allows HTTP and HTTPS on ports `80` and `443` alongside the detected
+  SSH port. It removes the temporary `3000/tcp` allow rule if present.
 - Do not add UFW rules opening ports `3000` or `5432`.
 
 Docker-published ports can bypass UFW filtering because Docker manages its own
@@ -178,7 +251,28 @@ networking rules. Binding the API to loopback and not publishing PostgreSQL
 are important exposure controls. See
 `docs/adr/0003-bind-published-ports-to-localhost.md`.
 
-## 8. Operational notes
+From a machine outside the VM, verify ports `3000` and `5432` are not
+reachable. If Nmap is available, they should be reported closed or filtered,
+not open:
+
+```bash
+nmap -Pn -p 3000,5432 SERVER_IP
+```
+
+On the administrator's laptop, map `beacon.test` to the current VM address in
+the hosts file (for example, `/etc/hosts` on Linux or macOS). If a rebuilt VM
+receives a different IP address, update that mapping before testing:
+
+```text
+SERVER_IP beacon.test
+```
+
+Then verify from the laptop with `curl -kI https://beacon.test/` and open
+`https://beacon.test/` in a browser. The `-k` option is for this local
+development certificate; use the Phase 2 Task 3 trust procedure if the local
+certificate authority has been installed on the client.
+
+## 9. Operational notes
 
 Manage Beacon through systemd:
 
