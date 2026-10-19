@@ -242,6 +242,12 @@ remove_ufw_added_rule() {
   done
 }
 
+remove_ufw_port_rules() {
+  local port="$1"
+  remove_ufw_added_rule "$port"
+  remove_ufw_added_rule "$port/tcp"
+}
+
 prepare_firewall() {
   local ssh_port
 
@@ -252,10 +258,10 @@ prepare_firewall() {
   # Validate the UFW output before making any changes, then remove only rules
   # managed by this script. Unrelated rules remain untouched.
   refresh_ufw_added_rules
-  remove_ufw_added_rule 80/tcp
-  remove_ufw_added_rule 443/tcp
-  remove_ufw_added_rule 3000/tcp
-  remove_ufw_added_rule 5432/tcp
+  remove_ufw_port_rules 80
+  remove_ufw_port_rules 443
+  remove_ufw_port_rules 3000
+  remove_ufw_port_rules 5432
 
   for ssh_port in "${SSH_PORTS[@]}"; do
     log "Allowing configured SSH port $ssh_port/tcp through UFW."
@@ -383,6 +389,18 @@ fi
   die "TLS certificate $TLS_CERT is missing or empty. Transfer the certificate and key using the Phase 2 Task 3 Multipass transfer procedure before bootstrapping."
 [[ -f "$TLS_KEY" && -s "$TLS_KEY" ]] ||
   die "TLS private key $TLS_KEY is missing or empty. Transfer the certificate and key using the Phase 2 Task 3 Multipass transfer procedure before bootstrapping."
+command -v openssl >/dev/null 2>&1 ||
+  die "OpenSSL is required to validate the TLS certificate and private key before system changes."
+openssl x509 -in "$TLS_CERT" -noout -checkend 0 >/dev/null 2>&1 ||
+  die "TLS certificate $TLS_CERT is malformed, expired, or unreadable."
+openssl pkey -in "$TLS_KEY" -passin pass: -noout >/dev/null 2>&1 ||
+  die "TLS private key $TLS_KEY is malformed, encrypted, or unreadable."
+TLS_CERT_PUBLIC_KEY="$(openssl x509 -in "$TLS_CERT" -pubkey -noout 2>/dev/null)" ||
+  die "Could not read the public key from TLS certificate $TLS_CERT."
+TLS_PRIVATE_PUBLIC_KEY="$(openssl pkey -in "$TLS_KEY" -passin pass: -pubout 2>/dev/null)" ||
+  die "Could not derive the public key from TLS private key $TLS_KEY."
+[[ -n "$TLS_CERT_PUBLIC_KEY" && "$TLS_CERT_PUBLIC_KEY" == "$TLS_PRIVATE_PUBLIC_KEY" ]] ||
+  die "TLS certificate and private key do not contain a matching key pair."
 
 # Prepare an existing firewall immediately after preflight. If UFW is absent,
 # install only its base prerequisites first, then use the same preparation
@@ -558,6 +576,14 @@ systemctl is-active --quiet nginx.service ||
   die "Nginx is not active after configuration and startup; leaving HTTP/HTTPS closed."
 systemctl is-active --quiet beacon.service ||
   die "Beacon is not active after startup; leaving HTTP/HTTPS closed."
+
+log "Checking the public HTTPS routes locally before opening the firewall."
+curl --fail --silent --show-error --max-time 10 --resolve beacon.test:443:127.0.0.1 \
+  --insecure https://beacon.test/ >/dev/null ||
+  die "Local HTTPS status-page check failed; leaving HTTP/HTTPS closed."
+curl --fail --silent --show-error --max-time 10 --resolve beacon.test:443:127.0.0.1 \
+  --insecure https://beacon.test/readyz >/dev/null ||
+  die "Local HTTPS readiness check failed; leaving HTTP/HTTPS closed."
 
 log "Opening HTTP and HTTPS after Nginx and Beacon are running."
 WEB_PORT_RULES_PENDING=1

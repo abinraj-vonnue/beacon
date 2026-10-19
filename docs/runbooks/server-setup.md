@@ -132,27 +132,31 @@ sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
 The script must run as root. It validates the environment file, repository
-inputs, deploy key, Ubuntu platform, and TLS files before system changes. It
-does not replace an existing `/opt/beacon/.env`. If UFW is already installed,
-the script stops an already active Nginx service, then immediately discovers
-SSH listeners, removes its explicit `80/tcp`, `443/tcp`, `3000/tcp`, and
-`5432/tcp` rules (including repeated entries), allows the discovered SSH
-ports, sets the default policies, and enables UFW. If UFW is absent, it stops
-an already active Nginx service, installs the base prerequisites, and then
-runs that same firewall preparation before installing Nginx. Neither path
-allows HTTP or HTTPS during firewall preparation. If preparation fails,
-Nginx stays stopped so an inactive or partially configured firewall cannot
-leave the web service reachable.
+inputs, deploy key, Ubuntu platform, and TLS files before system changes. The
+TLS preflight parses the certificate and unencrypted private key with OpenSSL,
+rejects expired certificates, and verifies that both contain the same public
+key. It does not replace an existing `/opt/beacon/.env`. If UFW is already
+installed, the script stops an already active Nginx service, then immediately
+discovers SSH listeners, removes explicit protocol-free and `/tcp` allow rules
+for ports `80`, `443`, `3000`, and `5432` (including repeated entries), allows the
+discovered SSH ports, sets the default policies, and enables UFW. If UFW is
+absent, it stops an already active Nginx service, installs the base
+prerequisites, and then runs that same firewall preparation before installing
+Nginx. Neither path allows HTTP or HTTPS during firewall preparation. If
+preparation fails, Nginx stays stopped so an inactive or partially configured
+firewall cannot leave the web service reachable.
 
 Nginx is installed only after UFW is enabled, so its package's default site
 cannot be reached through the script-managed web ports. The script installs
 the tracked Nginx site and rate-limit configuration, publishes `web/status/`
 under `/var/www/beacon/`, validates with `nginx -t`, then starts or reloads
 Nginx. After the existing systemd setup and Beacon service start both Nginx
-and Beacon are confirmed active, it adds `80/tcp` and `443/tcp`. If a step
-after cleanup fails, the script leaves those managed rules closed; if either
-final allow operation fails, it attempts to remove both rules before exiting.
-The status directory is synchronized idempotently.
+and Beacon are confirmed active, it requests the status page and `/readyz`
+through the local HTTPS listener. Only after both checks succeed does it add
+`80/tcp` and `443/tcp`. If a step after cleanup fails, the script leaves those
+managed rules closed; if either final allow operation fails, it attempts to
+remove both rules before exiting. The status directory is synchronized
+idempotently.
 
 Unrelated existing UFW rules are preserved. Review `sudo ufw status numbered`
 on an existing host; additional allow rules may expose ports beyond the
