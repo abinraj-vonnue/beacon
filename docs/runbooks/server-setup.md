@@ -132,12 +132,13 @@ sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
 The script must run as root. It is designed to be rerun without replacing an
-existing `/opt/beacon/.env`. It installs the tracked Nginx site and rate-limit
+existing `/opt/beacon/.env`. After validating deploy SSH access, it configures
+and enables UFW before installing Nginx. The firewall allows all discovered
+SSH ports plus `80/tcp` and `443/tcp`, and removes a prior `3000/tcp` allow
+rule if present. It then installs the tracked Nginx site and rate-limit
 configuration, publishes `web/status/` under `/var/www/beacon/`, validates
-Nginx with `nginx -t`, and only then starts or reloads the service. The status
-directory is synchronized idempotently. The UFW rules allow discovered SSH
-ports plus `80/tcp` and `443/tcp`; a prior `3000/tcp` allow rule is removed if
-present.
+Nginx with `nginx -t`, and only then explicitly starts or reloads the service.
+The status directory is synchronized idempotently.
 
 Before enabling UFW, the script reads active `ssh.socket` TCP listeners when
 socket activation is running; otherwise it reads the effective SSH port from

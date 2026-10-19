@@ -288,7 +288,6 @@ apt-get install -y \
   curl \
   gnupg \
   openssh-server \
-  nginx \
   rsync \
   python3 \
   ufw
@@ -330,6 +329,31 @@ if [[ -n "$PUBLIC_KEY_FILE" ]]; then
 fi
 
 validate_deploy_authorized_keys
+
+log "Configuring UFW before installing Nginx."
+ufw default deny incoming
+ufw default allow outgoing
+install -d -m 0755 /run/sshd
+discover_ssh_ports
+for ssh_port in "${SSH_PORTS[@]}"; do
+  log "Allowing configured SSH port $ssh_port/tcp through UFW."
+  ufw allow "$ssh_port/tcp"
+done
+ufw allow 80/tcp
+ufw allow 443/tcp
+
+# Remove only the temporary API rule, if it exists. Keep unrelated UFW rules.
+added_ufw_rules="$(ufw show added)" ||
+  die "Could not inspect existing UFW rules before removing the temporary API rule."
+if grep -Eq '^[[:space:]]*\+?[[:space:]]*ufw allow 3000/tcp([[:space:]]|$)' <<< "$added_ufw_rules"; then
+  log "Removing the temporary 3000/tcp UFW allow rule."
+  ufw --force delete allow 3000/tcp
+fi
+# Do not open ports 3000 or 5432.
+ufw --force enable
+
+log "Installing Nginx behind the enabled firewall."
+apt-get install -y nginx
 
 log "Installing Docker from the official Docker Ubuntu repository."
 . /etc/os-release
@@ -425,28 +449,6 @@ install -m 0644 "$DEPLOY_DIR/deploy/systemd/beacon-prune.service" \
   /etc/systemd/system/beacon-prune.service
 install -m 0644 "$DEPLOY_DIR/deploy/systemd/beacon-prune.timer" \
   /etc/systemd/system/beacon-prune.timer
-
-log "Configuring UFW."
-ufw default deny incoming
-ufw default allow outgoing
-install -d -m 0755 /run/sshd
-discover_ssh_ports
-for ssh_port in "${SSH_PORTS[@]}"; do
-  log "Allowing configured SSH port $ssh_port/tcp through UFW."
-  ufw allow "$ssh_port/tcp"
-done
-ufw allow 80/tcp
-ufw allow 443/tcp
-
-# Remove only the temporary API rule, if it exists. Keep unrelated UFW rules.
-added_ufw_rules="$(ufw show added)" ||
-  die "Could not inspect existing UFW rules before removing the temporary API rule."
-if grep -Eq '^[[:space:]]*\+?[[:space:]]*ufw allow 3000/tcp([[:space:]]|$)' <<< "$added_ufw_rules"; then
-  log "Removing the temporary 3000/tcp UFW allow rule."
-  ufw --force delete allow 3000/tcp
-fi
-# Do not open ports 3000 or 5432.
-ufw --force enable
 
 log "Hardening SSH."
 install -d -m 0755 /etc/ssh/sshd_config.d
