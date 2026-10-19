@@ -55,6 +55,7 @@ services:
       PORT: 3000
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgres://${POSTGRES_USER:-beacon}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-beacon}
+      TRUSTED_PROXY_IP: ${TRUSTED_PROXY_IP:-}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
