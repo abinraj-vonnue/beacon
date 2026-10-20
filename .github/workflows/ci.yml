@@ -1,5 +1,5 @@
-name: CI
 
+name: CI
 
 on:
   pull_request:
@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint, type-check and build
@@ -18,10 +22,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name : Set up node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -44,12 +48,11 @@ jobs:
       - name: Type-check worker
         run: npx tsc --noEmit -p apps/worker/tsconfig.json
 
-      - name: Build api
+      - name: Build API
         run: npm run build -w @beacon/api
 
-      - name: Build worker and shared package
+      - name: Build worker
         run: npm run build -w apps/worker
-
 
   test:
     name: Database migration and worker tests
@@ -73,30 +76,53 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+
     steps:
-    - name: Check out repository
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-    - name: Set up Node.js
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-      with:
-        node-version: 24
-        cache: npm
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-    - name: Apply database migrations
-      run: npm run migrate --workspace=@beacon/api
+      - name: Apply database migrations
+        run: npm run migrate --workspace=@beacon/api
 
-    - name: Run existing tests
-      run: npm test
+      - name: Run existing tests
+        run: npm test
 
+  docker-build:
+    name: Build Docker images (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: apps/api/Dockerfile
+          - image: worker
+            dockerfile: apps/worker/Dockerfile
 
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-
-
-
-
+      - name: Build image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: beacon-${{ matrix.image }}:ci
+          cache-from: type=gha,scope=beacon-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=beacon-${{ matrix.image }}
