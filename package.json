@@ -19,7 +19,8 @@
   },
   "scripts": {
     "build:worker": "npm run build --workspace=worker",
-    "test": "npm run test --workspace=worker"
+    "test": "npm run test --workspace=worker",
+    "lint": "eslint ."
   },
   "private": "true",
   "workspaces": [
@@ -28,6 +29,10 @@
     "packages/shared"
   ],
   "devDependencies": {
-    "@types/node": "^26.6.5"
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "typescript-eslint": "^8.72.0"
   }
 }
