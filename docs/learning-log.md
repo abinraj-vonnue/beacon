@@ -68,3 +68,15 @@ checkout before the `v0.1` milestone is published.
 - **Evidence:** TCP payloads and acknowledgements were observed in both directions during a database-backed request.
 - **Key finding:** `tcpdump -i any` captures traffic on Docker virtual interfaces, allowing container-to-container database communication to be observed even when the traffic does not traverse the host's published PostgreSQL port.
 - **VM path:** Not yet traced; Beacon is currently running on the host rather than inside the Multipass VM.
+
+## Phase 2 — Task 9: Let's Encrypt Read-Ahead
+
+HTTP-01 proves domain control by serving an ACME challenge file over
+port 80, whereas DNS-01 proves control through a DNS TXT record and
+supports wildcard certificates. For Beacon, I plan to use HTTP-01
+through Nginx in Phase 4 if the deployment uses a publicly reachable
+server and a real domain. I will test issuance and renewal with the
+Let's Encrypt staging environment before requesting production
+certificates to avoid consuming production issuance limits during
+troubleshooting. I will reconsider DNS-01 if wildcard certificates
+or DNS-based validation become necessary.
