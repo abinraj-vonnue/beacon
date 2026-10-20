@@ -7,7 +7,8 @@ set -Eeuo pipefail
 # Usage:
 #   sudo ./deploy/scripts/bootstrap-server.sh [deploy-public-key-file]
 
-readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly REPO_ROOT
 readonly DEPLOY_USER="deploy"
 readonly DEPLOY_DIR="/opt/beacon"
 readonly SSH_HARDENING="/etc/ssh/sshd_config.d/00-beacon-hardening.conf"
@@ -414,15 +415,23 @@ fi
 
 log "Installing required Ubuntu packages."
 export DEBIAN_FRONTEND=noninteractive
+# needrestart runs as an apt hook after installs and can block or restart
+# services mid-run. List-only mode never prompts and never restarts anything.
+export NEEDRESTART_MODE=l
+export NEEDRESTART_SUSPEND=1
+APT_OPTS=(
+  -o Dpkg::Options::=--force-confdef
+  -o Dpkg::Options::=--force-confold
+)
 apt-get update
-apt-get install -y \
+apt-get install -y "${APT_OPTS[@]}" \
   ca-certificates \
   curl \
   gnupg \
   openssh-server \
   rsync \
   python3 \
-  ufw
+  ufw </dev/null
 
 if [[ "$UFW_PREPARED" -eq 0 ]]; then
   prepare_firewall
@@ -468,7 +477,7 @@ chmod 0644 "$TLS_CERT"
 chmod 0600 "$TLS_KEY"
 
 log "Installing Nginx behind the enabled firewall."
-apt-get install -y nginx
+apt-get install -y "${APT_OPTS[@]}" nginx </dev/null
 
 log "Installing Docker from the official Docker Ubuntu repository."
 install -m 0755 -d /etc/apt/keyrings
@@ -476,22 +485,29 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
   -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 
+DOCKER_SUITE="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+[[ -n "$DOCKER_SUITE" ]] ||
+  die "Could not determine the Ubuntu codename for the Docker repository."
+curl -fsSI --max-time 15 \
+  "https://download.docker.com/linux/ubuntu/dists/${DOCKER_SUITE}/Release" >/dev/null ||
+  die "Docker does not publish a repository for Ubuntu '${DOCKER_SUITE}' (or it is unreachable). Check https://download.docker.com/linux/ubuntu/dists/ before rerunning."
+
 cat > /etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
-Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
+Suites: ${DOCKER_SUITE}
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc
 Architectures: $(dpkg --print-architecture)
 EOF
 
 apt-get update
-apt-get install -y \
+apt-get install -y "${APT_OPTS[@]}" \
   docker-ce \
   docker-ce-cli \
   containerd.io \
   docker-buildx-plugin \
-  docker-compose-plugin
+  docker-compose-plugin </dev/null
 
 log "Configuring Docker log rotation."
 install -d -m 0755 /etc/docker
