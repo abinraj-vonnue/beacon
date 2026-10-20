@@ -13,6 +13,7 @@ help:
 	@echo "  make build        Build API and worker TypeScript"
 	@echo "  make test         Run existing worker tests"
 	@echo "  make clean        Remove stopped Compose containers"
+	@echo "  make ci            Run local CI checks"
 
 .env:
 	@echo "Missing .env. Run 'cp .env.example .env' first."
@@ -44,6 +45,17 @@ build:
 	npm run build --workspace=worker
 
 test:
+	npm test
+
+ci:
+	npm ci
+	npm run lint
+	npm run build -w @beacon/shared
+	npx tsc --noEmit -p packages/shared/tsconfig.json
+	npx tsc --noEmit -p apps/api/tsconfig.json
+	npx tsc --noEmit -p apps/worker/tsconfig.json
+	npm run build -w @beacon/api
+	npm run build -w apps/worker
 	npm test
 
 clean:
