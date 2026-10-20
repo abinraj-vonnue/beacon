@@ -1,4 +1,4 @@
-FROM node:24.16.0-alpine3.22 AS build
+FROM node:26.3.0-alpine3.22 AS build
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ COPY packages/shared ./packages/shared
 RUN npm run build -w apps/worker
 
 
-FROM node:24.16.0-alpine3.22 AS runtime
+FROM node:26.3.0-alpine3.22 AS runtime
 
 ENV NODE_ENV=production
 
