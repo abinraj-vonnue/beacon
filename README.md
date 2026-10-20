@@ -1,3 +1,5 @@
+[![CI](https://github.com/abinraj-vonnue/beacon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/abinraj-vonnue/beacon/actions/workflows/ci.yml)
+
 # Beacon
 
 Beacon is a self-hosted HTTP monitoring service built with Node.js, TypeScript,
