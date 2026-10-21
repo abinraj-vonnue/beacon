@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  deployment-script-tests:
+    name: Deployment script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Check deployment shell syntax
+        run: bash -n deploy/scripts/deploy-release.sh deploy/scripts/tests/test-deploy-release.sh
+
+      - name: Test release ordering and state handling
+        run: bash deploy/scripts/tests/test-deploy-release.sh
+
   lint:
     name: Lint, type-check and build
     runs-on: ubuntu-latest

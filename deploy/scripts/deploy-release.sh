@@ -64,18 +64,16 @@ if (( test_mode == 0 )); then
 fi
 flock -x 9 || die "Could not acquire deployment lock."
 
-previous_run=0
-if [[ -e "$state_file" || -L "$state_file" ]]; then
-  [[ -f "$state_file" && ! -L "$state_file" ]] || die "Release state file is unsafe."
-  if (( test_mode == 0 )); then
-    [[ "$(stat -c '%u' -- "$state_file")" == 0 ]] || die "Release state file is not root-owned."
-  fi
-  state_lines=()
-  mapfile -t state_lines < "$state_file"
-  (( ${#state_lines[@]} == 1 )) || die "Release state file is malformed."
-  previous_run="${state_lines[0]}"
-  [[ "$previous_run" =~ ^(0|[1-9][0-9]*)$ ]] || die "Release state file is malformed."
+[[ -e "$state_file" || -L "$state_file" ]] || die "Release state file is missing; refusing deployment because release order is unknown."
+[[ -f "$state_file" && ! -L "$state_file" ]] || die "Release state file is unsafe."
+if (( test_mode == 0 )); then
+  [[ "$(stat -c '%u' -- "$state_file")" == 0 ]] || die "Release state file is not root-owned."
 fi
+state_lines=()
+mapfile -t state_lines < "$state_file"
+(( ${#state_lines[@]} == 1 )) || die "Release state file is malformed."
+previous_run="${state_lines[0]}"
+[[ "$previous_run" =~ ^(0|[1-9][0-9]*)$ ]] || die "Release state file is malformed."
 
 export LC_ALL=C
 if (( ${#release_run} < ${#previous_run} )) ||

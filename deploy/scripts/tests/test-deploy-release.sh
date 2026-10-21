@@ -46,6 +46,13 @@ export BEACON_DEPLOY_TEST_ROOT="$TEST_ROOT"
 export BEACON_TEST_LOG="$TEST_ROOT/commands.log"
 : > "$BEACON_TEST_LOG"
 
+if "$DEPLOY_SCRIPT" 10 aaaaaaa111111111111111111111111111111111; then
+  printf 'FAIL: missing release state should fail closed.\n' >&2
+  exit 1
+fi
+[[ ! -e "$TEST_ROOT/state/deployed-release-run-number" ]]
+[[ ! -s "$BEACON_TEST_LOG" ]]
+
 printf '10\n' > "$TEST_ROOT/state/deployed-release-run-number"
 "$DEPLOY_SCRIPT" 10 aaaaaaa111111111111111111111111111111111
 "$DEPLOY_SCRIPT" 9 bbbbbbb111111111111111111111111111111111
