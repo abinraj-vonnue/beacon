@@ -1,0 +1,9 @@
+services:
+  migrate:
+    image: ghcr.io/abinraj-vonnue/beacon/beacon-api:sha-ac19b6f
+
+  api:
+    image: ghcr.io/abinraj-vonnue/beacon/beacon-api:sha-ac19b6f
+
+  worker:
+    image: ghcr.io/abinraj-vonnue/beacon/beacon-worker:sha-ac19b6f
