@@ -1,0 +1,88 @@
+
+name: Deploy Beacon
+
+on:
+  workflow_run:
+    workflows: ["Release Images"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: beacon-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy published images through SSM
+        env:
+          INSTANCE_ID: ${{ vars.AWS_EC2_INSTANCE_ID }}
+          IMAGE_TAG: sha-${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          command_id=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy Beacon $IMAGE_TAG" \
+            --parameters "$(jq -nc \
+              --arg tag "$IMAGE_TAG" \
+              '{commands:[
+                "set -eu",
+                "cd /opt/beacon/app",
+                "test -f compose.yaml",
+                "test -f compose.prod.yaml",
+                ("sed -i -E \"s|beacon-api:sha-[a-f0-9]+|beacon-api:" + $tag + "|g; s|beacon-worker:sha-[a-f0-9]+|beacon-worker:" + $tag + "|g\" compose.prod.yaml"),
+                "docker compose --env-file /opt/beacon/.env -f compose.yaml -f compose.prod.yaml pull api worker migrate",
+                "docker compose --env-file /opt/beacon/.env -f compose.yaml -f compose.prod.yaml up -d",
+                "curl --fail --retry 10 --retry-delay 3 http://127.0.0.1:3000/readyz"
+              ]}') \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM command submitted: $command_id"
+
+          for attempt in $(seq 1 30); do
+            status=$(aws ssm get-command-invocation \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)
+
+            case "$status" in
+              Success)
+                echo "Deployment completed successfully."
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut)
+                echo "Deployment failed with status: $status"
+                aws ssm get-command-invocation \
+                  --command-id "$command_id" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                  --output json
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          echo "Timed out waiting for deployment result."
+          exit 1
