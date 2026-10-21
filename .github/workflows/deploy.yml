@@ -1,0 +1,131 @@
+
+name: Deploy Beacon
+
+on:
+  workflow_run:
+    workflows: ["Release Images"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beacon-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out deployment script
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy published images through SSM
+        env:
+          INSTANCE_ID: ${{ vars.AWS_EC2_INSTANCE_ID }}
+          RELEASE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          : "${INSTANCE_ID:?AWS_EC2_INSTANCE_ID is required}"
+          [[ "$INSTANCE_ID" =~ ^i-[a-f0-9]{8,17}$ ]] || { echo "AWS_EC2_INSTANCE_ID is invalid." >&2; exit 1; }
+          [[ "$RELEASE_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "Release run number is invalid." >&2; exit 1; }
+          [[ "$COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Release commit SHA is invalid." >&2; exit 1; }
+
+          script_base64="$(base64 -w0 deploy/scripts/deploy-release.sh)"
+          remote_script="$(jq -nr \
+            --arg script "$script_base64" \
+            --arg release "$RELEASE_RUN_NUMBER" \
+            --arg sha "$COMMIT_SHA" \
+            --arg cleanup 'rm -f -- "$script_path"' \
+            '"set -eu\n" +
+             "script_path=$(mktemp /usr/local/sbin/.beacon-deploy-release.XXXXXX)\n" +
+             "trap " + ($cleanup | @sh) + " EXIT\n" +
+             "printf %s " + ($script | @sh) + " | base64 -d > \"$script_path\"\n" +
+             "chown root:root -- \"$script_path\"\n" +
+             "chmod 0755 -- \"$script_path\"\n" +
+             "mv -f -- \"$script_path\" /usr/local/sbin/beacon-deploy-release\n" +
+             "trap - EXIT\n" +
+             "exec /usr/local/sbin/beacon-deploy-release " + ($release | @sh) + " " + ($sha | @sh)')"
+          parameters="$(jq -nc --arg commands "$remote_script" '{executionTimeout:["900"],commands:[$commands]}')"
+
+          command_id=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy Beacon release run $RELEASE_RUN_NUMBER" \
+            --timeout-seconds 900 \
+            --parameters "$parameters" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM command submitted: $command_id"
+
+          status_query_failed=0
+          for attempt in $(seq 1 190); do
+            if invocation_result=$(aws ssm get-command-invocation \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>&1); then
+              status="$invocation_result"
+            elif [[ "$invocation_result" == *InvocationDoesNotExist* ]]; then
+              status="Pending"
+            else
+              if (( status_query_failed == 0 )); then
+                echo "Could not read SSM invocation status; waiting for the remote execution timeout:" >&2
+                echo "$invocation_result" >&2
+                status_query_failed=1
+              fi
+              status="Pending"
+            fi
+
+            case "$status" in
+              Success)
+                echo "Deployment completed successfully."
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|DeliveryTimedOut|ExecutionTimedOut|Undeliverable|Terminated)
+                echo "Deployment failed with status: $status"
+                aws ssm get-command-invocation \
+                  --command-id "$command_id" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                  --output json || true
+                exit 1
+                ;;
+              Pending|InProgress|Delayed|Cancelling|None)
+                ;;
+              *)
+                echo "Unexpected SSM invocation status: $status" >&2
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          if (( status_query_failed )); then
+            echo "Could not observe the SSM command before its configured execution timeout."
+          else
+            echo "Timed out waiting for deployment result."
+          fi
+          exit 1
