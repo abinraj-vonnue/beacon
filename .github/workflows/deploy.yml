@@ -33,9 +33,10 @@ jobs:
       - name: Deploy published images through SSM
         env:
           INSTANCE_ID: ${{ vars.AWS_EC2_INSTANCE_ID }}
-          IMAGE_TAG: sha-${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
+          IMAGE_TAG="sha-${COMMIT_SHA:0:7}"
 
           command_id=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
@@ -43,7 +44,7 @@ jobs:
             --comment "Deploy Beacon $IMAGE_TAG" \
             --parameters "$(jq -nc \
               --arg tag "$IMAGE_TAG" \
-              '{commands:[
+              '{executionTimeout:["600"],commands:[
                 "set -eu",
                 "cd /opt/beacon/app",
                 "test -f compose.yaml",
@@ -52,13 +53,13 @@ jobs:
                 "docker compose --env-file /opt/beacon/.env -f compose.yaml -f compose.prod.yaml pull api worker migrate",
                 "docker compose --env-file /opt/beacon/.env -f compose.yaml -f compose.prod.yaml up -d",
                 "curl --fail --retry 10 --retry-delay 3 http://127.0.0.1:3000/readyz"
-              ]}') \
+              ]}')" \
             --query 'Command.CommandId' \
             --output text)
 
           echo "SSM command submitted: $command_id"
 
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 130); do
             status=$(aws ssm get-command-invocation \
               --command-id "$command_id" \
               --instance-id "$INSTANCE_ID" \
